@@ -48,6 +48,7 @@ from frontend.screens.technicians_screen import TechniciansScreen
 from frontend.screens.inspections_screen import InspectionsScreen
 from frontend.screens.components_screen import ComponentsScreen
 from frontend.screens.queries_screen import QueriesScreen
+from frontend.screens.archive_screen import ArchiveScreen
 
 # ==================================================
 # DYNAMIC DASHBOARD SCREEN
@@ -196,12 +197,14 @@ class MainWindow(ctk.CTk):
 
         # Dynamic Menu Items
         menu = [
-            ("🌍  Energy Sites", SitesScreen),
-            ("⚙️  Power Units", UnitsScreen),
-            ("👷  Technicians", TechniciansScreen),
-            ("🔍  Inspections", InspectionsScreen),
-            ("🔧  Component Replacements", ComponentsScreen),
-            ("📊  Reports & Queries", QueriesScreen)
+            (" 🏠  Dashboard", DashboardScreen), # Added this line
+            (" 🌍  Energy Sites", SitesScreen),
+            (" ⚙️  Power Units", UnitsScreen),
+            (" 👷  Technicians", TechniciansScreen),
+            (" 🔍  Inspections", InspectionsScreen),
+            (" 🔧  Component Replacements", ComponentsScreen),
+            (" 📊  Reports & Queries", QueriesScreen),
+            (" 📦  Archive", ArchiveScreen) 
         ]
 
         self.nav_widgets = {}
@@ -229,7 +232,7 @@ class MainWindow(ctk.CTk):
         ).grid(row=len(menu)+2, column=0, pady=20)
 
         # Start with the first menu item selected
-        first_name, first_cls = menu[0]
+        first_name, first_cls = menu[0] 
         self.show_screen(first_cls, first_name)
 
     def show_screen(self, screen_class, name):
