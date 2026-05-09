@@ -251,9 +251,9 @@ class MainWindow(ctk.CTk):
         instance = screen_class(self.main_view)
         instance.pack(fill="both", expand=True)
 
-if __name__ == "__main__":
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("dark-blue")
+# if __name__ == "__main__":
+#     ctk.set_appearance_mode("dark")
+#     ctk.set_default_color_theme("dark-blue")
     
-    app = MainWindow()
-    app.mainloop()
+#     app = MainWindow()
+#     app.mainloop()
