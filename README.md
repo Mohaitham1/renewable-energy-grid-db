@@ -1,6 +1,6 @@
 # renewable-energy-grid-db# ⚡ Renewable Energy Grid & Maintenance Network
 
-> University Database Project
+> Database Project
 > Faculty of Computers and AI — Cairo University
 
 ---
