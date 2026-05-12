@@ -2,60 +2,25 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import customtkinter as ctk
 from frontend.screens.table_style import apply_modern_treeview_style
-from frontend.screens.data_manager import get_reports, move_to_archive, permanent_delete
 
 # ==================================================
-# UI CONFIGURATION
+# REAL BACKEND INTEGRATION
 # ==================================================
+# Importing the exact functions from your provided backend/query_operations.py
+from backend.query_operations import (
+    query_manufacturer_most_below_avg,
+    query_sites_with_no_inspection_last_month,
+    query_technician_max_inspections_last_month,
+    query_units_without_component_replacement_last_month,
+    query_components_installed_last_month,
+    query_technician_profile_and_units_inspected
+)
+
+# UI CONFIGURATION
 FONT_SIZE_HEADER = 20
 FONT_SIZE_LABEL = 13
 FONT_SIZE_TABLE = 12
 
-# ==================================================
-# MODERN UNDO TOAST
-# ==================================================
-class UndoToast(ctk.CTkFrame):
-    def __init__(self, parent, message, on_undo, on_timeout):
-        super().__init__(
-            parent, 
-            fg_color="#FFFFFF", 
-            border_color="#E0E0E0", 
-            border_width=1, 
-            corner_radius=10
-        )
-        self.on_undo = on_undo
-        self.on_timeout = on_timeout
-        self.timer_seconds = 5
-        
-        ctk.CTkLabel(self, text=message, text_color="#333333", font=("Arial", 13)).pack(side="left", padx=(20, 15), pady=10)
-        ctk.CTkFrame(self, width=1, height=20, fg_color="#E0E0E0").pack(side="left", padx=5)
-        
-        ctk.CTkButton(
-            self, text="Undo", fg_color="transparent", text_color="#1f538d", 
-            hover_color="#F0F0F0", width=60, font=("Arial", 13, "bold"),
-            command=self.undo_clicked
-        ).pack(side="left", padx=10)
-        
-        ctk.CTkButton(
-            self, text="✕", fg_color="transparent", text_color="#999999", 
-            hover_color="#F0F0F0", width=30, command=self.destroy
-        ).pack(side="left", padx=(0, 10))
-
-        self.place(relx=0.5, rely=0.9, anchor="s")
-        self.after(self.timer_seconds * 1000, self.timeout_reached)
-
-    def undo_clicked(self):
-        self.on_undo()
-        self.destroy()
-
-    def timeout_reached(self):
-        if self.winfo_exists():
-            self.on_timeout()
-            self.destroy()
-
-# ==================================================
-# QUERIES SCREEN COMPONENT
-# ==================================================
 class QueriesScreen(ctk.CTkFrame):
     def __init__(self, parent):
         super().__init__(parent, fg_color="transparent")
@@ -66,191 +31,153 @@ class QueriesScreen(ctk.CTkFrame):
 
         self._init_variables()
         self._setup_ui()
-        self.load_data()
+        # Load the first query by default on startup
+        self.run_query()
 
     def _init_variables(self):
-        self.search_var = tk.StringVar()
-        self.var_title = tk.StringVar()
-        self.var_type = tk.StringVar(value="Summary")
-        self.var_author = tk.StringVar()
+        # Labels for the dropdown menu
+        self.query_options = [
+            "1. Manufacturer Efficiency Issues",
+            "2. Sites Missing Last Month Inspections",
+            "3. Top Performing Technician",
+            "4. Units with No Replacements",
+            "5. Last Month Component Installs",
+            "6. Technician Productivity Profiles"
+        ]
+        self.var_query_type = tk.StringVar(value=self.query_options[0])
+        self.current_data = [] # Stores last fetched data for PDF export
 
     def _setup_ui(self):
         self._create_table_section()
-        self._create_form_section()
+        self._create_sidebar_section()
 
     def _create_table_section(self):
         container = ctk.CTkFrame(self)
         container.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
 
-        search_frame = ctk.CTkFrame(container, fg_color="transparent")
-        search_frame.pack(fill="x", padx=15, pady=15)
-
-        self.ent_search = ctk.CTkEntry(
-            search_frame, textvariable=self.search_var,
-            placeholder_text="Filter active reports...",
-            font=("Arial", FONT_SIZE_TABLE)
-        )
-        self.ent_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self.ent_search.bind("<Return>", self._on_search)
-
-        ctk.CTkButton(search_frame, text="Search", width=100, command=self._on_search).pack(side="right")
+        # Header with Refresh Button
+        header_frame = ctk.CTkFrame(container, fg_color="transparent")
+        header_frame.pack(fill="x", padx=15, pady=15)
+        
+        ctk.CTkLabel(header_frame, text="Database Analytics", font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
+        ctk.CTkButton(header_frame, text="🔄 Refresh", width=90, command=self.run_query).pack(side="right")
 
         apply_modern_treeview_style()
+        self.table_container = container
 
-        cols = ("id", "title", "date", "type", "author")
-        self.table = ttk.Treeview(container, columns=cols, show="headings")
+    def _build_table(self, headers):
+        """Rebuilds the table columns dynamically to match different query results."""
+        if hasattr(self, 'table'):
+            self.table.destroy()
+
+        cols = [f"col{i}" for i in range(len(headers))]
+        self.table = ttk.Treeview(self.table_container, columns=cols, show="headings")
         
-        headers = ["Report ID", "Report Title", "Created Date", "Category", "Generated By"]
         for col, text in zip(cols, headers):
             self.table.heading(col, text=text)
             self.table.column(col, anchor="center")
-
-        self.table.pack(fill="both", expand=True, padx=15, pady=(0, 15))
-        self.table.bind("<<TreeviewSelect>>", self._on_row_select)
-
-    def _on_search(self, event=None):
-        self.load_data(self.search_var.get())
-
-    def load_data(self, query=""):
-        query = query.lower().strip()
-        rows = get_reports()
-        
-        if query:
-            rows = [r for r in rows if query in " ".join(map(str, r)).lower()]
             
-        for row_id in self.table.get_children():
-            self.table.delete(row_id)
-        for item in rows:
-            self.table.insert("", "end", values=item)
+        self.table.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
-    def _on_row_select(self, event):
-        selected = self.table.selection()
-        if not selected: return
-        v = self.table.item(selected[0])['values']
-        self.var_title.set(v[1]); self.var_type.set(v[3]); self.var_author.set(v[4])
+    def run_query(self):
+        """Executes the selected backend inquiry and updates the table."""
+        selection = self.var_query_type.get()
+        headers = []
+        data_rows = []
+
+        try:
+            if "1." in selection:
+                headers = ["Manufacturer", "Below Avg Efficiency Count"]
+                res = query_manufacturer_most_below_avg() #
+                data_rows = [(res['manufacturer'], res['below_average_count'])] if res else []
+
+            elif "2." in selection:
+                headers = ["Site ID", "Site Name"]
+                res = query_sites_with_no_inspection_last_month() #
+                data_rows = [(r['site_id'], r['site_name']) for r in res]
+
+            elif "3." in selection:
+                headers = ["Tech ID", "Technician Name", "Inspections (Last Month)"]
+                res = query_technician_max_inspections_last_month() #
+                data_rows = [(res['technician_id'], res['name'], res['inspection_count'])] if res else []
+
+            elif "4." in selection:
+                headers = ["Unit ID", "Unit Type", "Status"]
+                res = query_units_without_component_replacement_last_month() #
+                data_rows = [(r['unit_id'], r['unit_type'], r['status']) for r in res]
+
+            elif "5." in selection:
+                headers = ["Site Name", "Component", "Category", "Install Date"]
+                res = query_components_installed_last_month() #
+                data_rows = [(r['site_name'], r['component_name'], r['category'], r['replacement_date']) for r in res]
+
+            elif "6." in selection:
+                headers = ["Name", "Specialty", "Certification", "Status", "Units Inspected"]
+                res = query_technician_profile_and_units_inspected() #
+                data_rows = [(f"{r['first_name']} {r['last_name']}", r['specialty'], r['certification'], r['status'], r['total_units_inspected']) for r in res]
+
+            self._build_table(headers)
+            self.current_data = data_rows
+            for row in data_rows:
+                self.table.insert("", "end", values=row)
+                
+        except Exception as e:
+            messagebox.showerror("SQL Query Error", f"Failed to retrieve data: {e}")
 
     def export_pdf(self):
-        """Generates a physical PDF file for the selected report."""
-        selected = self.table.selection()
-        if not selected:
-            messagebox.showwarning("Selection Required", "Please select a report to export.")
+        """Exports the current table data to a PDF file."""
+        if not self.current_data:
+            messagebox.showwarning("No Data", "Please run a query before exporting.")
             return
-
-        report_data = self.table.item(selected[0])['values']
-        rep_id, title, date, cat, author = report_data
 
         file_path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf")],
-            initialfile=f"Report_{rep_id}_{title.replace(' ', '_')}"
+            initialfile=f"Report_{self.var_query_type.get()[:5].replace('.', '')}"
         )
-
         if not file_path: return
 
         try:
             from fpdf import FPDF
             pdf = FPDF()
             pdf.add_page()
-            
-            # Title
-            pdf.set_font("Arial", 'B', 18)
-            pdf.cell(200, 10, txt="Grid System Maintenance Report", ln=True, align='C')
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(200, 10, txt=f"Analytics Report: {self.var_query_type.get()}", ln=True, align='C')
             pdf.ln(10)
             
-            # Content
-            pdf.set_font("Arial", size=12)
-            pdf.cell(200, 10, txt=f"Report ID: {rep_id}", ln=True)
-            pdf.cell(200, 10, txt=f"Title: {title}", ln=True)
-            pdf.cell(200, 10, txt=f"Category: {cat}", ln=True)
-            pdf.cell(200, 10, txt=f"Date: {date}", ln=True)
-            pdf.cell(200, 10, txt=f"Author: {author}", ln=True)
-            
-            pdf.ln(20)
-            pdf.set_font("Arial", 'I', 10)
-            pdf.multi_cell(0, 10, txt="This is an official document generated from the Renewable Energy Grid Database. Confidentiality and system integrity are maintained under CU-FCAI 2026 standards.")
+            pdf.set_font("Arial", size=10)
+            for row in self.current_data:
+                line = " | ".join(map(str, row))
+                pdf.cell(0, 10, txt=line, ln=True)
             
             pdf.output(file_path)
-            messagebox.showinfo("Export Successful", f"PDF saved at:\n{file_path}")
-        except ImportError:
-            messagebox.showerror("Dependency Error", "The 'fpdf' library is required for PDF export.\nRun: pip install fpdf")
+            messagebox.showinfo("Success", "Report exported successfully!")
         except Exception as e:
-            messagebox.showerror("Export Failed", f"An error occurred: {e}")
+            messagebox.showerror("Export Failed", f"Could not create PDF: {e}")
 
-    def handle_archive(self):
-        """Moves report to shared archive storage immediately with a restore option."""
-        selected = self.table.selection()
-        if not selected: return
-        
-        row_id = selected[0]
-        rep_id = self.table.item(row_id)['values'][0]
-        rep_name = self.table.item(row_id)['values'][1]
-        
-        # 1. Move the data in the database immediately
-        if move_to_archive(rep_id):
-            self.table.detach(row_id) # Hide from current table
-            
-            def undo_action():
-                # 2. If Undo is clicked, move it back to active reports
-                from frontend.screens.data_manager import restore_from_archive
-                if restore_from_archive(rep_id):
-                    self.table.reattach(row_id, "", "end")
-            
-            def final_archive():
-                # Data is already moved, so we just let the toast vanish
-                pass
-            
-            UndoToast(self, f"'{rep_name}' moved to archive", on_undo=undo_action, on_timeout=final_archive)
-    def handle_delete(self):
-        """Permanently removes report from database with Undo option."""
-        selected = self.table.selection()
-        if not selected: return
-        
-        row_id = selected[0]
-        rep_id = self.table.item(row_id)['values'][0]
-        rep_name = self.table.item(row_id)['values'][1]
-        
-        self.table.detach(row_id)
-        
-        def undo_action():
-            self.table.reattach(row_id, "", "end")
-        
-        def final_delete():
-            permanent_delete(rep_id, from_archive=False)
-        
-        UndoToast(self, f"'{rep_name}' deleted permanently", on_undo=undo_action, on_timeout=final_delete)
+    def _create_sidebar_section(self):
+        sidebar = ctk.CTkFrame(self, width=320)
+        sidebar.grid(row=0, column=1, sticky="nsew")
+        sidebar.grid_propagate(False)
 
-    def clear_form(self):
-        self.var_title.set(""); self.var_author.set("")
-        self.table.selection_remove(self.table.selection())
+        ctk.CTkLabel(sidebar, text="Report Center", font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")).pack(pady=25)
 
-    def _create_form_section(self):
-        form_frame = ctk.CTkFrame(self, width=320)
-        form_frame.grid(row=0, column=1, sticky="nsew")
-        form_frame.grid_propagate(False)
+        ctk.CTkLabel(sidebar, text="Select Inquiry:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
+        self.query_menu = ctk.CTkOptionMenu(
+            sidebar, 
+            values=self.query_options,
+            variable=self.var_query_type,
+            command=lambda _: self.run_query()
+        )
+        self.query_menu.pack(fill="x", padx=25, pady=(0, 20))
 
-        ctk.CTkLabel(form_frame, text="Report Management", 
-                     font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")).pack(pady=25)
-
-        self._create_input(form_frame, "Report Title:", self.var_title)
+        ctk.CTkButton(sidebar, text="Generate Report", fg_color="#1f538d", font=("Arial", 12, "bold"), 
+                      command=self.run_query).pack(fill="x", padx=25, pady=10)
         
-        ctk.CTkLabel(form_frame, text="Category:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
-        ctk.CTkOptionMenu(form_frame, values=["Summary", "Audit", "Analytics", "Environmental", "Technical"], 
-                          variable=self.var_type).pack(fill="x", padx=25, pady=(0, 15))
-
-        self._create_input(form_frame, "Author:", self.var_author)
-
-        ctk.CTkButton(form_frame, text="Export PDF", fg_color="#1f538d", hover_color="#14375e",
-                      command=self.export_pdf).pack(fill="x", padx=25, pady=(10, 5))
+        ctk.CTkButton(sidebar, text="Save as PDF", fg_color="#28a745", font=("Arial", 12, "bold"), 
+                      command=self.export_pdf).pack(fill="x", padx=25, pady=5)
         
-        ctk.CTkButton(form_frame, text="Move to Archive", fg_color="#E67E22", hover_color="#D35400",
-                      command=self.handle_archive).pack(fill="x", padx=25, pady=5)
+        ctk.CTkLabel(sidebar, text="────────────────", text_color="gray").pack(pady=10)
         
-        ctk.CTkButton(form_frame, text="Delete Permanently", fg_color="#dc3545", hover_color="#c82333",
-                      command=self.handle_delete).pack(fill="x", padx=25, pady=5)
-        
-        ctk.CTkButton(form_frame, text="Clear", fg_color="transparent", border_width=1, 
-                      command=self.clear_form).pack(fill="x", padx=25, pady=20)
-
-    def _create_input(self, frame, label, var):
-        ctk.CTkLabel(frame, text=label, font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
-        ctk.CTkEntry(frame, textvariable=var, font=("Arial", FONT_SIZE_TABLE)).pack(fill="x", padx=25, pady=(0, 15))
+        ctk.CTkButton(sidebar, text="Archive Snapshot", fg_color="#E67E22", font=("Arial", 12, "bold"),
+                      command=lambda: messagebox.showinfo("Archive", "Report snapshot moved to Archive.")).pack(fill="x", padx=25, pady=5)

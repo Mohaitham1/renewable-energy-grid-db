@@ -4,9 +4,7 @@ import customtkinter as ctk
 from frontend.screens.table_style import apply_modern_treeview_style
 from frontend.screens.data_manager import get_archived, restore_from_archive, permanent_delete
 
-# ==================================================
 # UI CONFIGURATION
-# ==================================================
 FONT_SIZE_HEADER = 20
 FONT_SIZE_LABEL = 13
 FONT_SIZE_TABLE = 12
@@ -76,7 +74,6 @@ class ArchiveScreen(ctk.CTkFrame):
         container = ctk.CTkFrame(self)
         container.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
 
-        # Title Header
         header_frame = ctk.CTkFrame(container, fg_color="transparent")
         header_frame.pack(fill="x", padx=15, pady=15)
         
@@ -86,7 +83,6 @@ class ArchiveScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=22, weight="bold")
         ).pack(side="left")
 
-        # Table Styling
         apply_modern_treeview_style()
 
         cols = ("id", "title", "date", "type", "author")
@@ -117,7 +113,6 @@ class ArchiveScreen(ctk.CTkFrame):
             text_color="gray"
         ).pack(pady=(0, 30))
 
-        # Action Buttons
         ctk.CTkButton(
             action_frame, 
             text="Restore to Active", 
@@ -137,7 +132,7 @@ class ArchiveScreen(ctk.CTkFrame):
         ).pack(fill="x", padx=25, pady=5)
 
     def load_data(self):
-        """Refreshes the table with data from the archive database."""
+        """Refreshes the table with data from the simulated archive manager."""
         for row in self.table.get_children():
             self.table.delete(row)
         
@@ -154,15 +149,14 @@ class ArchiveScreen(ctk.CTkFrame):
         rep_id = self.table.item(row_id)['values'][0]
         rep_name = self.table.item(row_id)['values'][1]
         
+        # Detach temporarily for Undo feature
         self.table.detach(row_id)
         
         def undo_action():
             self.table.reattach(row_id, "", "end")
         
         def final_restore():
-            if restore_from_archive(rep_id):
-                # No need to reload table here as it's already detached
-                pass
+            restore_from_archive(rep_id)
         
         UndoToast(self, f"'{rep_name}' restored", on_undo=undo_action, on_timeout=final_restore)
 

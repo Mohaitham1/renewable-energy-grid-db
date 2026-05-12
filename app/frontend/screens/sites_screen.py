@@ -1,38 +1,17 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import customtkinter as ctk
 from frontend.screens.table_style import apply_modern_treeview_style
 
 # ==================================================
-# UI CONFIGURATION
+# REAL BACKEND INTEGRATION
 # ==================================================
+from backend.site_operations import get_all_sites, add_site, delete_site #
+
+# UI CONFIGURATION
 FONT_SIZE_HEADER = 20
 FONT_SIZE_LABEL = 13
 FONT_SIZE_TABLE = 12
-
-# ==================================================
-# MOCK BACKEND DATA
-# ==================================================
-sites_data = [
-    (1, "Sahara Solar Park", "Solar", "Aswan", "500 MW"),
-    (2, "Zafarana Wind Farm", "Wind", "Red Sea", "545 MW"),
-    (3, "Benban Solar", "Solar", "Aswan", "1.8 GW"),
-    (4, "Gabali El-Zeit", "Wind", "Red Sea", "580 MW")
-]
-
-def mock_get_sites():
-    return sites_data
-
-def mock_add_site(name, type_, location, capacity):
-    global sites_data
-    new_id = max([s[0] for s in sites_data]) + 1 if sites_data else 1
-    sites_data.append((new_id, name, type_, location, capacity))
-    return True
-
-def mock_delete_site(site_id):
-    global sites_data
-    sites_data = [s for s in sites_data if s[0] != site_id]
-    return True
 
 # ==================================================
 # MODERN UNDO TOAST
@@ -46,15 +25,16 @@ class UndoToast(ctk.CTkFrame):
             border_width=1, 
             corner_radius=10
         )
-        
         self.on_undo = on_undo
         self.on_timeout = on_timeout
         self.timer_seconds = 5
         
         ctk.CTkLabel(self, text=message, text_color="#333333", font=("Arial", 13)).pack(side="left", padx=(20, 15), pady=10)
         ctk.CTkFrame(self, width=1, height=20, fg_color="#E0E0E0").pack(side="left", padx=5)
-        ctk.CTkButton(self, text="Undo", fg_color="transparent", text_color="#1f538d", hover_color="#F0F0F0", width=60, font=("Arial", 13, "bold"), command=self.undo_clicked).pack(side="left", padx=10)
-        ctk.CTkButton(self, text="✕", fg_color="transparent", text_color="#999999", hover_color="#F0F0F0", width=30, command=self.destroy).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(self, text="Undo", fg_color="transparent", text_color="#1f538d", hover_color="#F0F0F0", 
+                      width=60, font=("Arial", 13, "bold"), command=self.undo_clicked).pack(side="left", padx=10)
+        ctk.CTkButton(self, text="✕", fg_color="transparent", text_color="#999999", hover_color="#F0F0F0", 
+                      width=30, command=self.destroy).pack(side="left", padx=(0, 10))
 
         self.place(relx=0.5, rely=0.9, anchor="s")
         self.after(self.timer_seconds * 1000, self.timeout_reached)
@@ -102,20 +82,14 @@ class SitesScreen(ctk.CTkFrame):
         search_frame.pack(fill="x", padx=15, pady=15)
 
         self.ent_search = ctk.CTkEntry(
-            search_frame,
-            textvariable=self.search_var,
-            placeholder_text="Search sites...",
+            search_frame, textvariable=self.search_var,
+            placeholder_text="Search sites by name, type, or location...",
             font=("Arial", FONT_SIZE_TABLE)
         )
         self.ent_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.ent_search.bind("<Return>", self._on_search)
 
-        ctk.CTkButton(
-            search_frame,
-            text="Search",
-            width=100,
-            command=self._on_search
-        ).pack(side="right")
+        ctk.CTkButton(search_frame, text="Search", width=100, command=self._on_search).pack(side="right")
 
         apply_modern_treeview_style()
 
@@ -132,21 +106,23 @@ class SitesScreen(ctk.CTkFrame):
 
     def load_data(self, query=""):
         query = query.lower().strip()
-        rows = mock_get_sites()
-        if query:
-            rows = [
-                row for row in rows
-                if query in " ".join(map(str, row[1:])).lower()
-            ]
-        for row_id in self.table.get_children():
-            self.table.delete(row_id)
-        for item in rows:
-            self.table.insert("", "end", values=item)
+        try:
+            # REAL DATABASE CALL
+            rows = get_all_sites()
+            
+            if query:
+                rows = [row for row in rows if query in " ".join(map(str, row)).lower()]
+            
+            for row_id in self.table.get_children():
+                self.table.delete(row_id)
+            for item in rows:
+                self.table.insert("", "end", values=item)
+        except Exception as e:
+            print(f"Error loading sites: {e}")
 
     def _on_row_select(self, event):
         selected = self.table.selection()
-        if not selected:
-            return
+        if not selected: return
         vals = self.table.item(selected[0])['values']
         self.var_name.set(vals[1])
         self.var_type.set(vals[2])
@@ -154,16 +130,24 @@ class SitesScreen(ctk.CTkFrame):
         self.var_cap.set(vals[4])
 
     def handle_add(self):
-        name, type_, loc, cap = self.var_name.get(), self.var_type.get(), self.var_loc.get(), self.var_cap.get()
+        name = self.var_name.get()
+        type_ = self.var_type.get()
+        loc = self.var_loc.get()
+        cap = self.var_cap.get()
+
         if name and loc:
-            if mock_add_site(name, type_, loc, cap):
-                self.load_data()
-                self.clear_form()
+            try:
+                # REAL DATABASE CALL
+                if add_site(name, type_, loc, cap):
+                    self.load_data()
+                    self.clear_form()
+                    messagebox.showinfo("Success", f"Site '{name}' added successfully.")
+            except Exception as e:
+                messagebox.showerror("Database Error", f"Could not add site: {e}")
 
     def handle_delete(self):
         selected = self.table.selection()
-        if not selected:
-            return
+        if not selected: return
         
         row_id = selected[0]
         site_id = self.table.item(row_id)['values'][0]
@@ -175,7 +159,11 @@ class SitesScreen(ctk.CTkFrame):
             self.table.reattach(row_id, "", "end")
         
         def final_delete():
-            mock_delete_site(site_id)
+            try:
+                # REAL DATABASE CALL
+                delete_site(site_id)
+            except Exception as e:
+                print(f"Error deleting site: {e}")
         
         UndoToast(self, f"'{site_name}' deleted", on_undo=undo_action, on_timeout=final_delete)
 
@@ -191,39 +179,25 @@ class SitesScreen(ctk.CTkFrame):
         form_frame.grid(row=0, column=1, sticky="nsew")
         form_frame.grid_propagate(False)
 
-        ctk.CTkLabel(
-            form_frame,
-            text="Site Details",
-            font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")
-        ).pack(pady=25)
+        ctk.CTkLabel(form_frame, text="Site Details", font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")).pack(pady=25)
 
         self._create_input(form_frame, "Site Name:", self.var_name)
-        self._create_input(form_frame, "Energy Type:", self.var_type)
+        
+        ctk.CTkLabel(form_frame, text="Energy Type:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
+        ctk.CTkOptionMenu(form_frame, values=["Solar", "Wind", "Hydro", "Geothermal"], variable=self.var_type).pack(fill="x", padx=25, pady=(0, 15))
+
         self._create_input(form_frame, "Location:", self.var_loc)
-        self._create_input(form_frame, "Capacity:", self.var_cap)
+        self._create_input(form_frame, "Capacity (e.g. 500 MW):", self.var_cap)
 
-        ctk.CTkButton(
-            form_frame,
-            text="Add Site",
-            fg_color="#28a745",
-            command=self.handle_add
-        ).pack(fill="x", padx=25, pady=(10, 5))
+        ctk.CTkButton(form_frame, text="Add Site", fg_color="#28a745", font=("Arial", FONT_SIZE_TABLE, "bold"), 
+                      command=self.handle_add).pack(fill="x", padx=25, pady=(10, 5))
 
-        ctk.CTkButton(
-            form_frame,
-            text="Delete Selected",
-            fg_color="#dc3545",
-            command=self.handle_delete
-        ).pack(fill="x", padx=25, pady=5)
+        ctk.CTkButton(form_frame, text="Delete Selected", fg_color="#dc3545", font=("Arial", FONT_SIZE_TABLE, "bold"), 
+                      command=self.handle_delete).pack(fill="x", padx=25, pady=5)
 
-        ctk.CTkButton(
-            form_frame,
-            text="Clear Form",
-            fg_color="transparent",
-            border_width=1,
-            command=self.clear_form
-        ).pack(fill="x", padx=25, pady=20)
+        ctk.CTkButton(form_frame, text="Clear Form", fg_color="transparent", border_width=1, 
+                      command=self.clear_form).pack(fill="x", padx=25, pady=20)
 
     def _create_input(self, frame, label, var):
-        ctk.CTkLabel(frame, text=label).pack(pady=5)
-        ctk.CTkEntry(frame, textvariable=var, width=250).pack(pady=5)
+        ctk.CTkLabel(frame, text=label, font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25, pady=(10, 0))
+        ctk.CTkEntry(frame, textvariable=var, font=("Arial", FONT_SIZE_TABLE)).pack(fill="x", padx=25, pady=(0, 15))
