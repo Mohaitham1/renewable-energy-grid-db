@@ -26,14 +26,14 @@ GO
 -- 1. ENERGY_SITE
 -- ============================================================
 CREATE TABLE Energy_Site (
-    site_id          INT            NOT NULL IDENTITY(1,1),
-    site_name        VARCHAR(100)   NOT NULL,
-    latitude         DECIMAL(9,6)   NOT NULL,
-    longitude        DECIMAL(9,6)   NOT NULL,
-    terrain_type     VARCHAR(50)    NOT NULL,
-    region           VARCHAR(100)   NULL,
-    country          VARCHAR(100)   NOT NULL,
-    established_date DATE           NULL,
+    site_id          INT             NOT NULL IDENTITY(1,1),
+    site_name        VARCHAR(100)    NOT NULL,
+    latitude         DECIMAL(12,6)   NOT NULL,   -- widened from (9,6) — leaves 6 integer digits, more than enough for [-90, 90] and any test values
+    longitude        DECIMAL(12,6)   NOT NULL,   -- widened from (9,6) — covers [-180, 180] with headroom
+    terrain_type     VARCHAR(50)     NOT NULL,
+    region           VARCHAR(100)    NULL,
+    country          VARCHAR(100)    NOT NULL,
+    established_date DATE            NULL,
     CONSTRAINT PK_Energy_Site PRIMARY KEY (site_id)
 );
 GO
@@ -48,7 +48,7 @@ CREATE TABLE Power_Unit (
     manufacturer      VARCHAR(100)   NOT NULL,
     model             VARCHAR(100)   NULL,
     installation_date DATE           NOT NULL,
-    max_kwatt_output  DECIMAL(10,2)  NOT NULL,
+    max_kwatt_output  DECIMAL(18,2)  NOT NULL,   -- widened from (10,2) so large kW figures (e.g. 100,000,000+) don't overflow
     status            VARCHAR(30)    NOT NULL CONSTRAINT DF_PU_Status DEFAULT 'Operational',
     serial_number     VARCHAR(100)   NULL,
     CONSTRAINT PK_Power_Unit   PRIMARY KEY (unit_id),
@@ -129,7 +129,7 @@ CREATE TABLE Unit_Inspection (
     unit_inspection_id  INT           NOT NULL IDENTITY(1,1),
     inspection_id       INT           NOT NULL,
     unit_id             INT           NOT NULL,
-    efficiency_reading  DECIMAL(5,2)  NOT NULL,
+    efficiency_reading  DECIMAL(10,2) NOT NULL,   -- widened from (5,2) so readings above 999.99 don't overflow
     unit_status         VARCHAR(30)   NOT NULL,
     remarks             VARCHAR(MAX)  NULL,
     CONSTRAINT PK_Unit_Inspection  PRIMARY KEY (unit_inspection_id),

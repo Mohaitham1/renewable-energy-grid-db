@@ -13,6 +13,7 @@
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Database Schema](#database-schema)
+- [Setup & Installation](#setup--installation)
 - [Running the App](#running-the-app)
 - [SQL Queries](#sql-queries)
 - [Team](#team)
@@ -56,41 +57,47 @@ This system is built for a green energy corporation that operates a network of p
 renewable-energy-grid-db/
 │
 ├── app/
-│   ├── main.py                          # Entry point
+│   ├── main.py                              # Entry point — launches the GUI
 │   │
 │   ├── backend/
-│   │   ├── db_connection.py             # Connection config & factory
-│   │   ├── site_operations.py           # CRUD — Energy Sites
-│   │   ├── unit_operations.py           # CRUD — Power Units
-│   │   ├── technician_operations.py     # CRUD — Technicians
-│   │   ├── inspection_operations.py     # CRUD — Inspections
-│   │   ├── component_operations.py      # CRUD — Component Replacements
-│   │   └── query_operations.py          # All 6 analytical queries
+│   │   ├── db_connection.py                 # Connection config & factory
+│   │   ├── site_operations.py               # CRUD — Energy Sites
+│   │   ├── unit_operations.py               # CRUD — Power Units
+│   │   ├── technician_operations.py         # CRUD — Technicians
+│   │   ├── inspection_operations.py         # CRUD — Inspections
+│   │   ├── component_operations.py          # CRUD — Component Replacements
+│   │   └── query_operations.py              # All 6 analytical SQL queries
 │   │
 │   └── frontend/
-│       ├── main_window.py               # App shell & sidebar navigation
+│       ├── main_window.py                   # App shell, sidebar navigation & dashboard
 │       └── screens/
-│           ├── sites_screen.py
-│           ├── units_screen.py
-│           ├── technicians_screen.py
-│           ├── inspections_screen.py
-│           ├── components_screen.py
-│           ├── queries_screen.py
-│           ├── archive_screen.py
-│           ├── table_style.py           # Shared Treeview dark theme
-│           └── data_manager.py          # Shared in-memory data store
+│           ├── __init__.py
+│           ├── sites_screen.py              # Energy Sites screen
+│           ├── units_screen.py              # Power Units screen
+│           ├── technicians_screen.py        # Technicians screen
+│           ├── inspections_screen.py        # Inspections screen
+│           ├── components_screen.py         # Component Replacements screen
+│           ├── queries_screen.py            # Reports & Queries screen
+│           ├── archive_screen.py            # Archive screen
+│           ├── table_style.py               # Shared Treeview dark theme
+│           └── data_manager.py              # Shared in-memory store for reports/archive
 │
 ├── database/
 │   ├── ddl/
-│   │   └── SQLddl.sql                   # Full schema (CREATE + indexes)
-│   └── queries/
-│       ├── queries.sql                  # All 6 queries in plain SQL
-│       └── insert_data.sql              # Realistic sample data (10 sites, 10 units, 10 technicians...)
+│   │   ├── SQLddl.sql                       # Full schema — all tables, constraints & indexes
+│   │   └── README.md
+│   ├── queries/
+│   │   ├── queries.sql                      # All 6 analytical queries in plain SQL
+│   │   ├── insert_data (2).sql              # Realistic sample data for all tables
+│   │   └── README.md
+│   └── sample_data/
+│       └── README.md
 │
 ├── docs/
-│   └── project_documentation.pdf        # Phase 3 submission PDF
+│   └── README.md
 │
 ├── requirements.txt
+├── .gitignore
 └── README.md
 ```
 
@@ -103,9 +110,9 @@ The database is named `renewable_energy` and contains 9 tables:
 ```
 Energy_Site
     └── Power_Unit
-            └── Unit_Inspection ──────────── Component_Replacement
-                    │                                 │
-            Inspection_Round                      Spare_Part
+            └── Unit_Inspection ────── Component_Replacement
+                    │                           │
+            Inspection_Round               Spare_Part
                     │
                Technician
                     └── Technician_Certification
@@ -118,8 +125,24 @@ Energy_Site
 - Each `Inspection_Round` is assigned to one `Technician` and covers one `Energy_Site`
 - Each `Unit_Inspection` links one `Power_Unit` to one `Inspection_Round`
 - Each `Component_Replacement` records one `Spare_Part` used during a `Unit_Inspection`
+- Each `Technician` can hold multiple certifications via `Technician_Certification`, which references `Unit_Type_Certification`
+
+**Tables created by `SQLddl.sql`:**
+
+| Table | Description |
+|---|---|
+| `Energy_Site` | GPS-tracked power generation sites |
+| `Power_Unit` | Individual turbines and solar arrays per site |
+| `Technician` | Field staff profiles and employment status |
+| `Unit_Type_Certification` | Certification types (Solar, Wind, Hydro) |
+| `Technician_Certification` | Which technicians hold which certifications |
+| `Inspection_Round` | Scheduled or completed inspection visits |
+| `Unit_Inspection` | Per-unit efficiency readings and status within a round |
+| `Spare_Part` | Inventory of available spare parts |
+| `Component_Replacement` | Parts used and recorded during a unit inspection |
 
 ---
+
 ## Running the App
 
 From inside the `app/` folder:
