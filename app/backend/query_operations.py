@@ -1,158 +1,204 @@
 from backend.db_connection import get_connection
 from datetime import datetime, timedelta
 
+
 def get_last_month_range():
+    """First and last calendar day of the previous month (YYYY-MM-DD)."""
     today = datetime.now()
     first_day_current_month = datetime(today.year, today.month, 1)
     last_month_end = first_day_current_month - timedelta(days=1)
     last_month_start = datetime(last_month_end.year, last_month_end.month, 1)
-    return last_month_start.strftime('%Y-%m-%d'), last_month_end.strftime('%Y-%m-%d')
+    return last_month_start.strftime("%Y-%m-%d"), last_month_end.strftime("%Y-%m-%d")
+
 
 # ==================================================
 # INQUIRY 1
 # ==================================================
 def query_manufacturer_most_below_avg():
-    """Which power unit manufacturer had the highest number of efficiency readings below average?"""
+    """Manufacturer with the most efficiency readings strictly below the global average."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT TOP 1 Manufacturer, COUNT(*) AS BelowAvgCount
+    cursor.execute(
+        """
+        SELECT TOP 1 pu.manufacturer, COUNT(*) AS below_avg_count
         FROM Power_Unit pu
-        JOIN Unit_Reading ur ON pu.Unit_ID = ur.Unit_ID
-        WHERE ur.Efficiency_Reading < (SELECT AVG(Efficiency_Reading) FROM Unit_Reading)
-        GROUP BY Manufacturer
-        ORDER BY BelowAvgCount DESC
-    """)
+        INNER JOIN Unit_Inspection ui ON pu.unit_id = ui.unit_id
+        WHERE ui.efficiency_reading < (SELECT AVG(efficiency_reading) FROM Unit_Inspection)
+        GROUP BY pu.manufacturer
+        ORDER BY below_avg_count DESC
+        """
+    )
     row = cursor.fetchone()
     conn.close()
     if row:
         return {"manufacturer": row[0], "below_average_count": row[1]}
     return None
 
+
 # ==================================================
 # INQUIRY 2
 # ==================================================
 def query_sites_with_no_inspection_last_month():
-    """Which energy site had no inspection rounds conducted during the last month?"""
+    """Sites with no completed inspection round in the previous calendar month."""
     start, end = get_last_month_range()
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT Site_ID, Site_Name
-        FROM Energy_Site
-        WHERE Site_ID NOT IN (
-            SELECT DISTINCT Site_ID
-            FROM Inspection_Round
-            WHERE Inspection_Date BETWEEN ? AND ?
+    cursor.execute(
+        """
+        SELECT es.site_id, es.site_name
+        FROM Energy_Site es
+        WHERE es.site_id NOT IN (
+            SELECT DISTINCT ir.site_id
+            FROM Inspection_Round ir
+            WHERE ir.status = 'Completed'
+              AND ir.conducted_date BETWEEN ? AND ?
         )
-    """, (start, end))
+        """,
+        (start, end),
+    )
     rows = cursor.fetchall()
     conn.close()
     return [{"site_id": row[0], "site_name": row[1]} for row in rows]
+
 
 # ==================================================
 # INQUIRY 3
 # ==================================================
 def query_technician_max_inspections_last_month():
-    """Who was the technician who completed the maximum number of inspections last month?"""
+    """Technician with the most completed inspection rounds last month."""
     start, end = get_last_month_range()
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT TOP 1 t.Technician_ID, t.First_Name, t.Last_Name, COUNT(*) AS InspectionCount
+    cursor.execute(
+        """
+        SELECT TOP 1 t.technician_id, t.first_name, t.last_name, COUNT(*) AS inspection_count
         FROM Inspection_Round ir
-        JOIN Technician t ON ir.Technician_ID = t.Technician_ID
-        WHERE ir.Inspection_Date BETWEEN ? AND ?
-        GROUP BY t.Technician_ID, t.First_Name, t.Last_Name
-        ORDER BY InspectionCount DESC
-    """, (start, end))
+        INNER JOIN Technician t ON ir.technician_id = t.technician_id
+        WHERE ir.status = 'Completed'
+          AND ir.conducted_date BETWEEN ? AND ?
+        GROUP BY t.technician_id, t.first_name, t.last_name
+        ORDER BY inspection_count DESC
+        """,
+        (start, end),
+    )
     row = cursor.fetchone()
     conn.close()
     if row:
-        return {"technician_id": row[0], "name": f"{row[1]} {row[2]}", "inspection_count": row[3]}
+        return {
+            "technician_id": row[0],
+            "name": f"{row[1]} {row[2]}",
+            "inspection_count": row[3],
+        }
     return None
+
 
 # ==================================================
 # INQUIRY 4
 # ==================================================
 def query_units_without_component_replacement_last_month():
-    """Identify power units that did not require any component replacements last month."""
+    """Power units that had no component replacement recorded in the previous calendar month."""
     start, end = get_last_month_range()
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT Unit_ID, Unit_Type, Status
-        FROM Power_Unit
-        WHERE Unit_ID NOT IN (
-            SELECT DISTINCT Unit_ID
-            FROM Component
-            WHERE Replacement_Date BETWEEN ? AND ?
+    cursor.execute(
+        """
+        SELECT pu.unit_id, pu.unit_type, pu.status
+        FROM Power_Unit pu
+        WHERE pu.unit_id NOT IN (
+            SELECT DISTINCT ui.unit_id
+            FROM Unit_Inspection ui
+            INNER JOIN Component_Replacement cr ON ui.unit_inspection_id = cr.unit_inspection_id
+            WHERE cr.replacement_date BETWEEN ? AND ?
         )
-    """, (start, end))
+        """,
+        (start, end),
+    )
     rows = cursor.fetchall()
     conn.close()
     return [{"unit_id": row[0], "unit_type": row[1], "status": row[2]} for row in rows]
+
 
 # ==================================================
 # INQUIRY 5
 # ==================================================
 def query_components_installed_last_month():
-    """What were the specific components installed at each energy site last month?"""
+    """Component replacements (spare parts) per site in the previous calendar month."""
     start, end = get_last_month_range()
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT es.Site_ID, es.Site_Name, c.Component_ID, c.Component_Name, c.Category, c.Replacement_Date
-        FROM Energy_Site es
-        JOIN Power_Unit pu ON es.Site_ID = pu.Site_ID
-        JOIN Component c ON pu.Unit_ID = c.Unit_ID
-        WHERE c.Replacement_Date BETWEEN ? AND ?
-        ORDER BY es.Site_Name, c.Replacement_Date
-    """, (start, end))
+    cursor.execute(
+        """
+        SELECT es.site_id,
+               es.site_name,
+               cr.replacement_id,
+               sp.part_name,
+               sp.part_number,
+               cr.replacement_date
+        FROM Component_Replacement cr
+        INNER JOIN Unit_Inspection ui ON cr.unit_inspection_id = ui.unit_inspection_id
+        INNER JOIN Power_Unit pu ON ui.unit_id = pu.unit_id
+        INNER JOIN Energy_Site es ON pu.site_id = es.site_id
+        INNER JOIN Spare_Part sp ON cr.part_id = sp.part_id
+        WHERE cr.replacement_date BETWEEN ? AND ?
+        ORDER BY es.site_name, cr.replacement_date
+        """,
+        (start, end),
+    )
     rows = cursor.fetchall()
     conn.close()
-    return [{
-        "site_id": row[0],
-        "site_name": row[1],
-        "component_id": row[2],
-        "component_name": row[3],
-        "category": row[4],
-        "replacement_date": str(row[5])
-    } for row in rows]
+    return [
+        {
+            "site_id": row[0],
+            "site_name": row[1],
+            "component_id": row[2],
+            "component_name": row[3],
+            "category": row[4],
+            "replacement_date": str(row[5]),
+        }
+        for row in rows
+    ]
+
 
 # ==================================================
 # INQUIRY 6
 # ==================================================
 def query_technician_profile_and_units_inspected():
-    """For each technician, retrieve their profile and the total number of power units they inspected."""
+    """Technician profile fields and count of distinct units inspected (via inspection rounds)."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            t.Technician_ID,
-            t.First_Name,
-            t.Last_Name,
-            t.Specialty,
-            t.Certification,
-            t.Status,
-            COUNT(DISTINCT ur.Unit_ID) AS TotalUnitsInspected
+    cursor.execute(
+        """
+        SELECT t.technician_id,
+               t.first_name,
+               t.last_name,
+               t.email,
+               t.phone,
+               t.hire_date,
+               t.employment_status,
+               COUNT(DISTINCT ui.unit_id) AS total_units_inspected
         FROM Technician t
-        LEFT JOIN Inspection_Round ir ON t.Technician_ID = ir.Technician_ID
-        LEFT JOIN Unit_Reading ur ON ir.Inspection_ID = ur.Inspection_ID
-        GROUP BY t.Technician_ID, t.First_Name, t.Last_Name, t.Specialty, t.Certification, t.Status
-        ORDER BY t.Technician_ID
-    """)
+        LEFT JOIN Inspection_Round ir ON t.technician_id = ir.technician_id
+        LEFT JOIN Unit_Inspection ui ON ir.inspection_id = ui.inspection_id
+        GROUP BY t.technician_id, t.first_name, t.last_name, t.email, t.phone, t.hire_date, t.employment_status
+        ORDER BY t.technician_id
+        """
+    )
     rows = cursor.fetchall()
     conn.close()
-    return [{
-        "technician_id": row[0],
-        "first_name": row[1],
-        "last_name": row[2],
-        "specialty": row[3],
-        "certification": row[4],
-        "status": row[5],
-        "total_units_inspected": row[6]
-    } for row in rows]
+    return [
+        {
+            "technician_id": row[0],
+            "first_name": row[1],
+            "last_name": row[2],
+            "email": row[3],
+            "phone": row[4],
+            "hire_date": str(row[5]) if row[5] is not None else None,
+            "employment_status": row[6],
+            "total_units_inspected": row[7],
+        }
+        for row in rows
+    ]
+
 
 # ==================================================
 # HELPER: Run all queries at once (for dashboard)
@@ -164,5 +210,5 @@ def run_all_queries():
         "inquiry_3": query_technician_max_inspections_last_month(),
         "inquiry_4": query_units_without_component_replacement_last_month(),
         "inquiry_5": query_components_installed_last_month(),
-        "inquiry_6": query_technician_profile_and_units_inspected()
+        "inquiry_6": query_technician_profile_and_units_inspected(),
     }

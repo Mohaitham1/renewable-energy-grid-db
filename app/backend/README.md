@@ -31,7 +31,7 @@ from backend.db_connection import get_connection
 Before running the app, open `db_connection.py` and set:
 ```python
 SERVER_NAME   = "YOUR_SERVER_NAME"
-DATABASE_NAME = "RenewableEnergyDB"
+DATABASE_NAME = "renewable_energy"
 ```
 
 ---
