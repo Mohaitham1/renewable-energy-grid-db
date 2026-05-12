@@ -13,7 +13,6 @@
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Database Schema](#database-schema)
-- [Setup & Installation](#setup--installation)
 - [Running the App](#running-the-app)
 - [SQL Queries](#sql-queries)
 - [Team](#team)
