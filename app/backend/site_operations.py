@@ -26,12 +26,48 @@ def add_site(site_name, latitude, longitude, terrain_type, region, country, esta
 
 
 def delete_site(site_id):
+    """Delete a site and all dependent records.
+
+    FK chain (none cascade automatically):
+        Energy_Site <- Power_Unit <- Unit_Inspection <- Component_Replacement
+        Energy_Site <- Inspection_Round -> Unit_Inspection (cascade on round)
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM Energy_Site WHERE site_id = ?", (site_id,))
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        cursor.execute(
+            """
+            DELETE FROM Component_Replacement
+            WHERE unit_inspection_id IN (
+                SELECT ui.unit_inspection_id
+                FROM Unit_Inspection ui
+                INNER JOIN Power_Unit pu ON ui.unit_id = pu.unit_id
+                WHERE pu.site_id = ?
+            )
+            """,
+            (site_id,),
+        )
+        cursor.execute(
+            """
+            DELETE FROM Unit_Inspection
+            WHERE unit_id IN (SELECT unit_id FROM Power_Unit WHERE site_id = ?)
+            """,
+            (site_id,),
+        )
+        cursor.execute(
+            "DELETE FROM Inspection_Round WHERE site_id = ?", (site_id,)
+        )
+        cursor.execute(
+            "DELETE FROM Power_Unit WHERE site_id = ?", (site_id,)
+        )
+        cursor.execute("DELETE FROM Energy_Site WHERE site_id = ?", (site_id,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def update_site(site_id, site_name, latitude, longitude, terrain_type, region, country, established_date=None):

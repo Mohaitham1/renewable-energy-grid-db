@@ -34,12 +34,32 @@ def add_unit(site_name, unit_type, manufacturer, model, installation_date, max_k
 
 
 def delete_unit(unit_id):
+    """Delete a unit and all dependent records.
+
+    FK chain: Power_Unit <- Unit_Inspection <- Component_Replacement.
+    Neither cascades, so we must clean from the leaf up.
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM Power_Unit WHERE unit_id = ?", (unit_id,))
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        cursor.execute(
+            """
+            DELETE FROM Component_Replacement
+            WHERE unit_inspection_id IN (
+                SELECT unit_inspection_id FROM Unit_Inspection WHERE unit_id = ?
+            )
+            """,
+            (unit_id,),
+        )
+        cursor.execute("DELETE FROM Unit_Inspection WHERE unit_id = ?", (unit_id,))
+        cursor.execute("DELETE FROM Power_Unit WHERE unit_id = ?", (unit_id,))
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def update_unit(unit_id, site_name, unit_type, manufacturer, model, installation_date, max_kwatt_output, status, serial_number=None):

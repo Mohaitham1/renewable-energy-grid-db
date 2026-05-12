@@ -7,7 +7,7 @@ from frontend.screens.table_style import apply_modern_treeview_style
 # REAL BACKEND INTEGRATION
 # ==================================================
 from backend.inspection_operations import get_all_inspections, add_inspection, delete_inspection
-from backend.site_operations import get_all_sites
+from backend.unit_operations import get_all_units
 from backend.technician_operations import get_all_technicians
 
 # UI CONFIGURATION
@@ -64,13 +64,24 @@ class InspectionsScreen(ctk.CTkFrame):
         self._init_variables()
         self._setup_ui()
         self.load_data()
+        self.bind("<Destroy>", self._flush_pending_deletes)
 
     def _init_variables(self):
         self.search_var = tk.StringVar()
-        self.var_unit = tk.StringVar() # Maps to Site Name in backend
-        self.var_tech = tk.StringVar()
+        self.var_unit = tk.StringVar()  # holds a display label resolvable to a unit_id
+        self.var_tech = tk.StringVar()  # holds a display label resolvable to a tech_id
         self.var_date = tk.StringVar(value="2026-05-10")
         self.var_result = tk.StringVar(value="Pass")
+        # Maps for the Power Unit dropdown: display label <-> unit_id.
+        self._unit_display_to_id = {}
+        self._unit_id_to_display = {}
+        # Same pattern for technicians — eliminates first/last-name string matching.
+        self._tech_display_to_id = {}
+        self._tech_id_to_display = {}
+        # Pending undo-toast deletions that must be committed if the user
+        # switches tabs before the 5s timer fires (the screen frame, and the
+        # toast's `after` callback, are destroyed on navigation).
+        self._pending_deletes = []
 
     def _setup_ui(self):
         self._create_table_section()
@@ -126,48 +137,152 @@ class InspectionsScreen(ctk.CTkFrame):
         selected = self.table.selection()
         if not selected: return
         v = self.table.item(selected[0])['values']
-        self.var_unit.set(v[1]); self.var_tech.set(v[2]); self.var_date.set(v[3]); self.var_result.set(v[4])
+        # v = (unit_inspection_id, unit_id, technician_name, date, status)
+        unit_id_str = str(v[1])
+        self.var_unit.set(self._unit_id_to_display.get(unit_id_str, unit_id_str))
+        # We only have the joined "First Last" name in the table; look up by
+        # name to find the id-bearing display label. If no match, fall back to
+        # the raw name (backend resolver will still handle it).
+        tech_name = (v[2] or "").strip()
+        matching = next(
+            (display for display, tid in self._tech_display_to_id.items()
+             if display.endswith(tech_name)),
+            tech_name,
+        )
+        self.var_tech.set(matching)
+        self.var_date.set(v[3]); self.var_result.set(v[4])
 
     def handle_add(self):
-        site, tech = self.var_unit.get(), self.var_tech.get()
-        date, result = self.var_date.get(), self.var_result.get()
+        unit_label = self.var_unit.get().strip()
+        tech_label = self.var_tech.get().strip()
+        date = self.var_date.get().strip()
+        result = self.var_result.get().strip()
 
-        if site and tech:
+        unit_id = self._unit_display_to_id.get(unit_label)
+        if unit_id is None:
             try:
-                # REAL DATABASE CALL
-                if add_inspection(site, tech, date, result):
-                    self.load_data()
-                    self.clear_form()
-                    messagebox.showinfo("Success", "Inspection logged successfully.")
-                else:
-                    messagebox.showerror("Error", "Could not log inspection. Verify Site and Technician exist.")
-            except Exception as e:
-                messagebox.showerror("Database Error", str(e))
+                unit_id = int(unit_label)
+            except (TypeError, ValueError):
+                unit_id = None
+
+        tech_id = self._tech_display_to_id.get(tech_label)
+        if tech_id is None:
+            # Allow a user who pasted a raw int or a "First Last" name.
+            try:
+                tech_id = int(tech_label)
+            except (TypeError, ValueError):
+                tech_id = None
+
+        if not unit_id or (tech_id is None and not tech_label):
+            messagebox.showwarning(
+                "Input Error",
+                "Please pick a Power Unit and a Technician before saving.",
+            )
+            return
+
+        # If we have a tech_id, send the int (zero-ambiguity path). Otherwise
+        # let the backend resolver fall back to name matching with LTRIM/RTRIM.
+        tech_arg = tech_id if tech_id is not None else tech_label
+
+        try:
+            # REAL DATABASE CALL
+            if add_inspection(unit_id, tech_arg, date, result):
+                self.load_data()
+                self.clear_form()
+                messagebox.showinfo("Success", "Inspection logged successfully.")
+            else:
+                messagebox.showerror("Error", "Could not log inspection. Verify Unit and Technician exist.")
+        except Exception as e:
+            messagebox.showerror("Database Error", str(e))
 
     def handle_delete(self):
         selected = self.table.selection()
         if not selected: return
-        
+
         row_id = selected[0]
         insp_id = self.table.item(row_id)['values'][0]
-        
+
         self.table.detach(row_id)
-        
-        def undo_action():
-            self.table.reattach(row_id, "", "end")
-        
-        def final_delete():
+
+        entry = {"state": "live"}
+
+        def commit(quiet=False):
+            if entry["state"] != "live":
+                return
+            entry["state"] = "committed"
             try:
-                # REAL DATABASE CALL
                 delete_inspection(insp_id)
             except Exception as e:
-                print(f"Error deleting inspection: {e}")
-        
-        UndoToast(self, f"Inspection {insp_id} deleted", on_undo=undo_action, on_timeout=final_delete)
+                entry["state"] = "failed"
+                if quiet:
+                    print(f"Delete inspection {insp_id} failed during flush: {e}")
+                    return
+                try:
+                    self.table.reattach(row_id, "", "end")
+                except Exception:
+                    self.load_data()
+                messagebox.showerror(
+                    "Delete Failed",
+                    f"Could not delete inspection {insp_id}.\n\n{e}",
+                )
+
+        def undo_action():
+            entry["state"] = "cancelled"
+            self.table.reattach(row_id, "", "end")
+
+        entry["flush"] = lambda: commit(quiet=True)
+        self._pending_deletes.append(entry)
+
+        UndoToast(self, f"Inspection {insp_id} deleted", on_undo=undo_action, on_timeout=commit)
+
+    def _flush_pending_deletes(self, event=None):
+        # <Destroy> bubbles for every descendant — only flush when the screen
+        # frame itself is being torn down (e.g., tab switch).
+        if event is not None and getattr(event, "widget", None) is not self:
+            return
+        for entry in self._pending_deletes:
+            entry["flush"]()
+        self._pending_deletes.clear()
 
     def clear_form(self):
         self.var_unit.set(""); self.var_tech.set(""); self.var_date.set("2026-05-10")
         self.table.selection_remove(self.table.selection())
+
+    def _build_unit_options(self):
+        """Populate the unit dropdown maps and return its display values."""
+        self._unit_display_to_id.clear()
+        self._unit_id_to_display.clear()
+        try:
+            units = get_all_units()  # (unit_id, site_name, unit_type, status, max_kwatt_output)
+        except Exception as e:
+            print(f"Loading units for Inspections dropdown failed: {e}")
+            units = []
+        displays = []
+        for unit_id, site_name, unit_type, *_ in units:
+            display = f"#{unit_id} - {unit_type} @ {site_name}"
+            self._unit_display_to_id[display] = unit_id
+            self._unit_id_to_display[str(unit_id)] = display
+            displays.append(display)
+        return displays or ["No Units Available"]
+
+    def _build_technician_options(self):
+        """Same idea as _build_unit_options, but for technicians. The display
+        label includes the int id so handle_add can resolve without any string
+        comparison against first/last name."""
+        self._tech_display_to_id.clear()
+        self._tech_id_to_display.clear()
+        try:
+            techs = get_all_technicians()  # (technician_id, full_name, email, phone, hire_date, status)
+        except Exception as e:
+            print(f"Loading technicians for Inspections dropdown failed: {e}")
+            techs = []
+        displays = []
+        for tech_id, full_name, *_ in techs:
+            display = f"#{tech_id} - {(full_name or '').strip()}"
+            self._tech_display_to_id[display] = tech_id
+            self._tech_id_to_display[str(tech_id)] = display
+            displays.append(display)
+        return displays or ["No Technicians Available"]
 
     def _create_form_section(self):
         form_frame = ctk.CTkFrame(self, width=320)
@@ -177,19 +292,13 @@ class InspectionsScreen(ctk.CTkFrame):
         ctk.CTkLabel(form_frame, text="Log Inspection", font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")).pack(pady=25)
 
         # Fields matching the uploaded screenshot
-        ctk.CTkLabel(form_frame, text="Unit ID:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
-        try:
-            site_names = [s[1] for s in get_all_sites()]
-        except:
-            site_names = ["No Sites Found"]
-        ctk.CTkOptionMenu(form_frame, values=site_names, variable=self.var_unit).pack(fill="x", padx=25, pady=(0, 15))
+        ctk.CTkLabel(form_frame, text="Power Unit:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
+        unit_displays = self._build_unit_options()
+        ctk.CTkOptionMenu(form_frame, values=unit_displays, variable=self.var_unit).pack(fill="x", padx=25, pady=(0, 15))
 
-        ctk.CTkLabel(form_frame, text="Technician Name:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
-        try:
-            tech_names = [t[1] for t in get_all_technicians()]
-        except:
-            tech_names = ["No Techs Found"]
-        ctk.CTkOptionMenu(form_frame, values=tech_names, variable=self.var_tech).pack(fill="x", padx=25, pady=(0, 15))
+        ctk.CTkLabel(form_frame, text="Technician:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
+        tech_displays = self._build_technician_options()
+        ctk.CTkOptionMenu(form_frame, values=tech_displays, variable=self.var_tech).pack(fill="x", padx=25, pady=(0, 15))
 
         self._create_input(form_frame, "Date (YYYY-MM-DD):", self.var_date)
         

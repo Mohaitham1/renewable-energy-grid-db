@@ -35,12 +35,44 @@ def add_technician(full_name, email, phone, hire_date, employment_status):
 
 
 def delete_technician(tech_id):
+    """Delete a technician and all records that reference them.
+
+    Foreign-key chain (none of these cascade automatically):
+        Technician  <-  Inspection_Round (FK_IR_Tech)
+        Inspection_Round  ->  Unit_Inspection (ON DELETE CASCADE)
+        Unit_Inspection  <-  Component_Replacement (FK_CR_UnitInspection)
+        Technician  <-  Technician_Certification (ON DELETE CASCADE)
+    So we must purge Component_Replacement rows tied to this tech's
+    Unit_Inspections before touching Inspection_Round.
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM Technician WHERE technician_id = ?", (tech_id,))
-    conn.commit()
-    conn.close()
-    return True
+    try:
+        cursor.execute(
+            """
+            DELETE FROM Component_Replacement
+            WHERE unit_inspection_id IN (
+                SELECT ui.unit_inspection_id
+                FROM Unit_Inspection ui
+                INNER JOIN Inspection_Round ir ON ui.inspection_id = ir.inspection_id
+                WHERE ir.technician_id = ?
+            )
+            """,
+            (tech_id,),
+        )
+        cursor.execute(
+            "DELETE FROM Inspection_Round WHERE technician_id = ?", (tech_id,)
+        )
+        cursor.execute(
+            "DELETE FROM Technician WHERE technician_id = ?", (tech_id,)
+        )
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def update_technician(tech_id, full_name, email, phone, hire_date, employment_status):

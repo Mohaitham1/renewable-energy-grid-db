@@ -16,12 +16,17 @@ def get_dashboard_stats():
         sites = get_all_sites()
         units = get_all_units()
         techs = get_all_technicians()
-        
+
+        # get_all_units row: (unit_id, site_name, unit_type, status, max_kwatt_output)
+        active_unit_statuses = ("Active", "Operational")
+        # get_all_technicians row: (technician_id, full_name, email, phone, hire_date, employment_status)
+        on_call_statuses = ("Active", "On-Site")
+
         return {
             "total_sites": len(sites),
-            "active_units": len([u for u in units if u[3] == 'Active']), # Filter by status
-            "technicians_on_call": len([t for t in techs if t[4] in ['Active', 'On-Site']]),
-            "pending_inspections": 0  # To be linked when inspections_operations is finalized
+            "active_units": len([u for u in units if u[3] in active_unit_statuses]),
+            "technicians_on_call": len([t for t in techs if t[5] in on_call_statuses]),
+            "pending_inspections": 0,
         }
     except Exception as e:
         print(f"DATABASE ERROR: {e}")
@@ -31,13 +36,12 @@ def get_recent_alerts():
     """Dynamically generates alerts based on unit maintenance status."""
     try:
         units = get_all_units()
-        # Generate alerts for any units currently in 'Maintenance' or 'Offline'
         alerts = []
         for u in units:
-            if u[3] in ['Maintenance', 'Offline']:
+            if u[3] in ('Maintenance', 'Offline', 'Faulty'):
                 alerts.append((u[3], f"{u[2]} at {u[1]}", "Now"))
         return alerts[:3] if alerts else [("All Clear", "No critical issues", "Today")]
-    except:
+    except Exception:
         return [("Connection Error", "Check DB settings", "Now")]
 
 # ==================================================
@@ -45,17 +49,27 @@ def get_recent_alerts():
 # ==================================================
 
 def real_add_entry(name, category):
-    """Dispatches 'Quick Add' requests to the correct backend file."""
+    """Dispatches 'Quick Add' requests to the correct backend file.
+
+    Uses sensible placeholders for the columns Quick Add can't capture so the
+    call matches each backend's current signature. The user is expected to fill
+    in the full record from the dedicated screen.
+    """
+    today = "2026-05-12"
     if category == "Site":
-        # real add_site requires (name, energy_type, location, capacity)
-        return add_site(name, "Solar", "TBD", "0 MW")
+        # add_site(site_name, latitude, longitude, terrain_type, region, country, established_date=None)
+        return add_site(name, 0.0, 0.0, "Unspecified", "TBD", "TBD", today)
     elif category == "Unit":
-        # real add_unit requires (site_name, unit_type, status, output)
-        # Note: This assumes 'General' is a valid unit type and uses placeholder site
-        return add_unit("Sahara Solar", "General", "Active", "0")
+        sites = get_all_sites()
+        if not sites:
+            return False
+        first_site_name = sites[0][1]
+        # add_unit(site_name, unit_type, manufacturer, model, installation_date,
+        #          max_kwatt_output, status, serial_number=None)
+        return add_unit(first_site_name, name or "PV Panel", "TBD", None, today, 0, "Operational", None)
     elif category == "Technician":
-        # real add_technician requires (full_name, specialty, certification, status)
-        return add_technician(name, "Generalist", "Junior", "Active")
+        # add_technician(full_name, email, phone, hire_date, employment_status)
+        return add_technician(name, None, None, today, "Active")
     return False
 
 # ==================================================
@@ -191,9 +205,20 @@ class MainWindow(ctk.CTk):
         self.nav_widgets[name].configure(fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"], height=55)
         self.active_button = name
 
+        # Belt-and-braces: commit any pending undo-toast deletions BEFORE we
+        # destroy the screen. The screens also bind <Destroy> for this, but
+        # CTk's destroy lifecycle doesn't always fire the event on the frame
+        # itself before children get torn down — calling explicitly here means
+        # the commit doesn't depend on Tk's event ordering.
         for child in self.main_view.winfo_children():
+            flush = getattr(child, "_flush_pending_deletes", None)
+            if callable(flush):
+                try:
+                    flush()
+                except Exception as e:
+                    print(f"Pending-delete flush raised on tab switch: {e}")
             child.destroy()
-            
+
         instance = screen_class(self.main_view)
         instance.pack(fill="both", expand=True)
 

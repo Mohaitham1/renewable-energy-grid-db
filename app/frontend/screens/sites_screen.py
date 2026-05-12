@@ -62,13 +62,35 @@ class SitesScreen(ctk.CTkFrame):
         self._init_variables()
         self._setup_ui()
         self.load_data()
+        self.bind("<Destroy>", self._flush_pending_deletes)
 
     def _init_variables(self):
         self.search_var = tk.StringVar()
+        # Mirrors Energy_Site columns one-for-one so handle_add can hand the
+        # backend exactly what the schema needs.
         self.var_name = tk.StringVar()
-        self.var_type = tk.StringVar(value="Solar")
-        self.var_loc = tk.StringVar()
-        self.var_cap = tk.StringVar()
+        self.var_country = tk.StringVar()
+        self.var_region = tk.StringVar()
+        self.var_terrain = tk.StringVar(value="Desert")
+        self.var_lat = tk.StringVar(value="0.0")
+        self.var_lon = tk.StringVar(value="0.0")
+        self.var_date = tk.StringVar()
+        self.selected_site_id = None
+        # get_all_sites returns 8 cols but the table only displays 6 — keep the
+        # full row per iid so _on_row_select can populate every form field.
+        self._row_data = {}
+        # Pending undo-toast deletions that must be committed if the user
+        # switches tabs before the 5s timer fires (the screen frame, and the
+        # toast's `after` callback, are destroyed on navigation).
+        self._pending_deletes = []
+
+    TERRAIN_OPTIONS = ["Desert", "Coastal", "Mountain", "Plains", "Forest", "Urban", "Offshore"]
+
+    # DECIMAL(12,6) holds |value| < 10^(12-6) = 1_000_000. Real-world lat/lon
+    # ranges are much tighter; reject anything outside them so a typo can't
+    # corrupt a row even within the column's capacity.
+    LAT_MIN, LAT_MAX = -90.0, 90.0
+    LON_MIN, LON_MAX = -180.0, 180.0
 
     def _setup_ui(self):
         self._create_table_section()
@@ -93,11 +115,13 @@ class SitesScreen(ctk.CTkFrame):
 
         apply_modern_treeview_style()
 
-        cols = ("id", "name", "type", "loc", "cap")
+        cols = ("id", "name", "country", "region", "terrain", "established")
         self.table = ttk.Treeview(container, columns=cols, show="headings")
-        for col, text in zip(cols, ["ID", "Site Name", "Energy Type", "Location", "Capacity"]):
+        headers = ["ID", "Site Name", "Country", "Region", "Terrain", "Established"]
+        widths = [60, 200, 130, 140, 120, 110]
+        for col, text, w in zip(cols, headers, widths):
             self.table.heading(col, text=text)
-            self.table.column(col, anchor="center")
+            self.table.column(col, anchor="center", width=w)
         self.table.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         self.table.bind("<<TreeviewSelect>>", self._on_row_select)
 
@@ -107,97 +131,178 @@ class SitesScreen(ctk.CTkFrame):
     def load_data(self, query=""):
         query = query.lower().strip()
         try:
-            # REAL DATABASE CALL
+            # REAL DATABASE CALL — row = (site_id, site_name, latitude, longitude,
+            # terrain_type, region, country, established_date)
             rows = get_all_sites()
-            
+
             if query:
                 rows = [row for row in rows if query in " ".join(map(str, row)).lower()]
-            
+
+            self._row_data.clear()
             for row_id in self.table.get_children():
                 self.table.delete(row_id)
             for item in rows:
-                self.table.insert("", "end", values=item)
+                display = (
+                    item[0],            # id
+                    item[1],            # site_name
+                    item[6] or "",      # country
+                    item[5] or "",      # region
+                    item[4] or "",      # terrain
+                    str(item[7]) if item[7] is not None else "",
+                )
+                iid = self.table.insert("", "end", values=display)
+                self._row_data[iid] = item
         except Exception as e:
             print(f"Error loading sites: {e}")
 
     def _on_row_select(self, event):
         selected = self.table.selection()
-        if not selected: return
-        vals = self.table.item(selected[0])['values']
-        self.var_name.set(vals[1])
-        self.var_type.set(vals[2])
-        self.var_loc.set(vals[3])
-        self.var_cap.set(vals[4])
+        if not selected:
+            return
+        full = self._row_data.get(selected[0])
+        if not full:
+            return
+        self.selected_site_id = full[0]
+        self.var_name.set(full[1] or "")
+        self.var_lat.set("" if full[2] is None else str(full[2]))
+        self.var_lon.set("" if full[3] is None else str(full[3]))
+        terrain = full[4] or ""
+        self.var_terrain.set(terrain if terrain in self.TERRAIN_OPTIONS else (terrain or "Desert"))
+        self.var_region.set(full[5] or "")
+        self.var_country.set(full[6] or "")
+        self.var_date.set("" if full[7] is None else str(full[7]))
 
     def handle_add(self):
-        name = self.var_name.get()
-        type_ = self.var_type.get()
-        loc = self.var_loc.get()
-        cap = self.var_cap.get()
+        name = self.var_name.get().strip()
+        country = self.var_country.get().strip()
+        region = self.var_region.get().strip() or None
+        terrain = self.var_terrain.get().strip()
+        date = self.var_date.get().strip() or None
 
-        if name and loc:
-            try:
-                # REAL DATABASE CALL
-                if add_site(name, type_, loc, cap):
-                    self.load_data()
-                    self.clear_form()
-                    messagebox.showinfo("Success", f"Site '{name}' added successfully.")
-            except Exception as e:
-                messagebox.showerror("Database Error", f"Could not add site: {e}")
+        if not name or not country or not terrain:
+            messagebox.showwarning(
+                "Input Error",
+                "Site Name, Country, and Terrain Type are required.",
+            )
+            return
+
+        try:
+            lat = float(self.var_lat.get().strip() or "0")
+            lon = float(self.var_lon.get().strip() or "0")
+        except ValueError:
+            messagebox.showwarning(
+                "Input Error", "Latitude and Longitude must be numbers."
+            )
+            return
+
+        if not (self.LAT_MIN <= lat <= self.LAT_MAX):
+            messagebox.showwarning(
+                "Input Error",
+                f"Latitude must be between {self.LAT_MIN} and {self.LAT_MAX}.",
+            )
+            return
+        if not (self.LON_MIN <= lon <= self.LON_MAX):
+            messagebox.showwarning(
+                "Input Error",
+                f"Longitude must be between {self.LON_MIN} and {self.LON_MAX}.",
+            )
+            return
+
+        try:
+            # REAL DATABASE CALL
+            if add_site(name, lat, lon, terrain, region, country, date):
+                self.load_data()
+                self.clear_form()
+                messagebox.showinfo("Success", f"Site '{name}' added successfully.")
+        except Exception as e:
+            messagebox.showerror("Database Error", f"Could not add site: {e}")
 
     def handle_delete(self):
         selected = self.table.selection()
         if not selected: return
-        
+
         row_id = selected[0]
         site_id = self.table.item(row_id)['values'][0]
         site_name = self.table.item(row_id)['values'][1]
-        
+
         self.table.detach(row_id)
-        
-        def undo_action():
-            self.table.reattach(row_id, "", "end")
-        
-        def final_delete():
+
+        entry = {"state": "live"}
+
+        def commit(quiet=False):
+            if entry["state"] != "live":
+                return
+            entry["state"] = "committed"
             try:
-                # REAL DATABASE CALL
                 delete_site(site_id)
             except Exception as e:
-                print(f"Error deleting site: {e}")
-        
-        UndoToast(self, f"'{site_name}' deleted", on_undo=undo_action, on_timeout=final_delete)
+                entry["state"] = "failed"
+                if quiet:
+                    print(f"Delete site {site_id} failed during flush: {e}")
+                    return
+                try:
+                    self.table.reattach(row_id, "", "end")
+                except Exception:
+                    self.load_data()
+                messagebox.showerror(
+                    "Delete Failed",
+                    f"Could not delete site '{site_name}'.\n\n{e}",
+                )
+
+        def undo_action():
+            entry["state"] = "cancelled"
+            self.table.reattach(row_id, "", "end")
+
+        entry["flush"] = lambda: commit(quiet=True)
+        self._pending_deletes.append(entry)
+
+        UndoToast(self, f"'{site_name}' deleted", on_undo=undo_action, on_timeout=commit)
+
+    def _flush_pending_deletes(self, event=None):
+        if event is not None and getattr(event, "widget", None) is not self:
+            return
+        for entry in self._pending_deletes:
+            entry["flush"]()
+        self._pending_deletes.clear()
 
     def clear_form(self):
+        self.selected_site_id = None
         self.var_name.set("")
-        self.var_type.set("Solar")
-        self.var_loc.set("")
-        self.var_cap.set("")
+        self.var_country.set("")
+        self.var_region.set("")
+        self.var_terrain.set("Desert")
+        self.var_lat.set("0.0")
+        self.var_lon.set("0.0")
+        self.var_date.set("")
         self.table.selection_remove(self.table.selection())
 
     def _create_form_section(self):
-        form_frame = ctk.CTkFrame(self, width=320)
+        # Scrollable so every Energy_Site field stays reachable in the side panel.
+        form_frame = ctk.CTkScrollableFrame(self, width=340, label_text="")
         form_frame.grid(row=0, column=1, sticky="nsew")
-        form_frame.grid_propagate(False)
 
-        ctk.CTkLabel(form_frame, text="Site Details", font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")).pack(pady=25)
+        ctk.CTkLabel(form_frame, text="Site Details", font=ctk.CTkFont(size=FONT_SIZE_HEADER, weight="bold")).pack(pady=(15, 12))
 
         self._create_input(form_frame, "Site Name:", self.var_name)
-        
-        ctk.CTkLabel(form_frame, text="Energy Type:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25)
-        ctk.CTkOptionMenu(form_frame, values=["Solar", "Wind", "Hydro", "Geothermal"], variable=self.var_type).pack(fill="x", padx=25, pady=(0, 15))
+        self._create_input(form_frame, "Country:", self.var_country)
+        self._create_input(form_frame, "Region (optional):", self.var_region)
 
-        self._create_input(form_frame, "Location:", self.var_loc)
-        self._create_input(form_frame, "Capacity (e.g. 500 MW):", self.var_cap)
+        ctk.CTkLabel(form_frame, text="Terrain Type:", font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25, pady=(8, 0))
+        ctk.CTkOptionMenu(form_frame, values=self.TERRAIN_OPTIONS, variable=self.var_terrain).pack(fill="x", padx=25, pady=(0, 12))
 
-        ctk.CTkButton(form_frame, text="Add Site", fg_color="#28a745", font=("Arial", FONT_SIZE_TABLE, "bold"), 
+        self._create_input(form_frame, "Latitude:", self.var_lat)
+        self._create_input(form_frame, "Longitude:", self.var_lon)
+        self._create_input(form_frame, "Established Date (YYYY-MM-DD, optional):", self.var_date)
+
+        ctk.CTkButton(form_frame, text="Add Site", fg_color="#28a745", font=("Arial", FONT_SIZE_TABLE, "bold"),
                       command=self.handle_add).pack(fill="x", padx=25, pady=(10, 5))
 
-        ctk.CTkButton(form_frame, text="Delete Selected", fg_color="#dc3545", font=("Arial", FONT_SIZE_TABLE, "bold"), 
+        ctk.CTkButton(form_frame, text="Delete Selected", fg_color="#dc3545", font=("Arial", FONT_SIZE_TABLE, "bold"),
                       command=self.handle_delete).pack(fill="x", padx=25, pady=5)
 
-        ctk.CTkButton(form_frame, text="Clear Form", fg_color="transparent", border_width=1, 
-                      command=self.clear_form).pack(fill="x", padx=25, pady=20)
+        ctk.CTkButton(form_frame, text="Clear Form", fg_color="transparent", border_width=1,
+                      command=self.clear_form).pack(fill="x", padx=25, pady=(5, 20))
 
     def _create_input(self, frame, label, var):
-        ctk.CTkLabel(frame, text=label, font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25, pady=(10, 0))
-        ctk.CTkEntry(frame, textvariable=var, font=("Arial", FONT_SIZE_TABLE)).pack(fill="x", padx=25, pady=(0, 15))
+        ctk.CTkLabel(frame, text=label, font=("Arial", FONT_SIZE_LABEL)).pack(anchor="w", padx=25, pady=(8, 0))
+        ctk.CTkEntry(frame, textvariable=var, font=("Arial", FONT_SIZE_TABLE)).pack(fill="x", padx=25, pady=(0, 10))

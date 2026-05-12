@@ -201,6 +201,69 @@ def query_technician_profile_and_units_inspected():
 
 
 # ==================================================
+# AGGREGATES FOR CHARTING
+# These return full lists where the corresponding top-level inquiry only
+# returns a single winner — the table view still shows that winner, but the
+# Reports → Chart tab needs the distribution.
+# ==================================================
+def query_manufacturer_below_avg_counts():
+    """All manufacturers + how many of their efficiency readings are strictly
+    below the global average. Sorted high → low so a bar chart reads naturally."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT pu.manufacturer, COUNT(*) AS below_avg_count
+        FROM Power_Unit pu
+        INNER JOIN Unit_Inspection ui ON pu.unit_id = ui.unit_id
+        WHERE ui.efficiency_reading < (SELECT AVG(efficiency_reading) FROM Unit_Inspection)
+        GROUP BY pu.manufacturer
+        ORDER BY below_avg_count DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"manufacturer": r[0], "below_average_count": r[1]} for r in rows]
+
+
+def query_technician_inspection_counts_last_month():
+    """Every technician's count of completed inspection rounds last month —
+    not just the winner. Zero-count techs are included so the bar chart shows
+    the full team."""
+    start, end = get_last_month_range()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT t.technician_id,
+               t.first_name + ' ' + t.last_name AS full_name,
+               COUNT(ir.inspection_id) AS inspection_count
+        FROM Technician t
+        LEFT JOIN Inspection_Round ir
+            ON  ir.technician_id = t.technician_id
+            AND ir.status = 'Completed'
+            AND ir.conducted_date BETWEEN ? AND ?
+        GROUP BY t.technician_id, t.first_name, t.last_name
+        ORDER BY inspection_count DESC, t.technician_id
+        """,
+        (start, end),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"technician_id": r[0], "name": r[1], "inspection_count": r[2]} for r in rows]
+
+
+def query_total_site_count():
+    """Total number of Energy_Site rows — for the 'inspected vs not' donut."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM Energy_Site")
+    n = cursor.fetchone()[0]
+    conn.close()
+    return int(n)
+
+
+# ==================================================
 # HELPER: Run all queries at once (for dashboard)
 # ==================================================
 def run_all_queries():
