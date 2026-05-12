@@ -121,42 +121,6 @@ Energy_Site
 - Each `Component_Replacement` records one `Spare_Part` used during a `Unit_Inspection`
 
 ---
-
-## Setup & Installation
-
-### Prerequisites
-- Python 3.11+
-- Microsoft SQL Server (local or remote instance)
-- ODBC Driver 17 for SQL Server
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/your-org/renewable-energy-grid-db.git
-cd renewable-energy-grid-db
-```
-
-### 2. Install Python dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Set up the database
-Open SQL Server Management Studio (SSMS), then run these scripts **in order**:
-```
-database/ddl/SQLddl.sql          ← creates all tables and indexes
-database/queries/insert_data.sql ← loads sample data
-```
-
-### 4. Configure the connection
-Open `app/backend/db_connection.py` and set your server name:
-```python
-SERVER_NAME   = "YOUR_SERVER_NAME"   # e.g. "localhost" or "DESKTOP-XYZ\\SQLEXPRESS"
-DATABASE_NAME = "renewable_energy"
-USE_WINDOWS_AUTH = True              # set False and fill in credentials if needed
-```
-
----
-
 ## Running the App
 
 From inside the `app/` folder:
