@@ -193,7 +193,7 @@ class InspectionsScreen(ctk.CTkFrame):
     def handle_add(self):
         if self.var_unit.get() and self.var_tech.get():
             mock_add_inspection(self.var_unit.get(), self.var_tech.get(), self.var_date.get(), self.var_result.get())
-            self.load_data(); self.clear_form()
+            self.load_data(self.search_var.get()); self.clear_form()
 
     def handle_delete(self):
         selected = self.table.selection()
