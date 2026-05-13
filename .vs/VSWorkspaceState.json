@@ -1,0 +1,11 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\app",
+    "\\app\\backend",
+    "\\app\\frontend",
+    "\\app\\frontend\\screens"
+  ],
+  "SelectedNode": "\\app\\frontend\\screens\\data_manager.py",
+  "PreviewInSolutionExplorer": false
+}
